@@ -19,6 +19,7 @@ pub(crate) struct Runtime {
     chromosome: grind_chromosome::Chromosome,
 }
 impl Runtime {
+    pub(crate) fn adopt_mode_settings(&mut self, other: Self) { self.settings = other.settings; }
     pub fn load(data: &Collections) -> Result<Self, String> {
         Ok(Self {
             states: [State::new(); 6],

@@ -19,6 +19,8 @@ pub struct ExtraColliderDefinition {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BodyDefinition {
+    #[serde(default)]
+    pub deformation: Option<crate::deformation::Field>,
     pub body: BodyDesc,
     pub extras: Vec<ExtraColliderDefinition>,
 }
@@ -140,7 +142,7 @@ impl DynamicsWorld {
         self.bodies.get(*self.ids.get(&id)?).map(|b|b.local_center_of_mass().to_array())
     }
     pub fn definition_revision(&self, id: u64) -> Option<usize> {
-        self.meta.get(&id).map(|m| m.extra_hulls.len())
+        self.meta.get(&id).map(|m| m.geometry_revision.wrapping_mul(17).wrapping_add(m.extra_hulls.len()))
     }
 
     /// Geometry is resolved locally before export; never send or execute Lua.
@@ -150,6 +152,7 @@ impl DynamicsWorld {
         body.position = [0.; 3];
         body.heading = 0.;
         Some(BodyDefinition {
+            deformation: self.deformation(id).cloned(),
             body,
             extras: meta.extra_hulls.iter().map(|h| ExtraColliderDefinition {
                 points: h.points.clone(), translation: h.translation, friction: h.friction,
@@ -161,11 +164,20 @@ impl DynamicsWorld {
         if definition.extras.len() > 16 || matches!(definition.body.shape, Shape::Mesh { .. } | Shape::Model { .. }) {
             return Err("unsupported or oversized replica definition".into());
         }
+        if let Some(field)=&definition.deformation {field.validate()?;}
+        let runtime=match (&definition.deformation,&definition.body.deformation) {
+            (Some(field),Some(options))=>Some(crate::deformation::Runtime::replica(field.clone(),options.clone())?),
+            (None,None)=>None,
+            _=>return Err("replica deformation configuration/field mismatch".into()),
+        };
         let mut desc = definition.body.clone();
+        desc.deformation=None;
         // Ownership stays with the sender. The receiver does not resimulate
         // its engine, joints, Lua callbacks or local input.
         desc.body_type = BodyType::Dynamic;
         let id = self.spawn(desc)?;
+        if let Some(runtime)=runtime {self.deformations.insert(id,runtime);}
+        if let Some(meta)=self.meta.get_mut(&id) {meta.definition.deformation=definition.body.deformation.clone();}
         for extra in &definition.extras {
             if let Err(error) = self.add_convex_collider(id, &extra.points, extra.translation, extra.friction) {
                 self.remove(id);

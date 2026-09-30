@@ -78,3 +78,12 @@ successful compilation; no unconditional no-penetration claim is made.
 
 ## 4.4.0 API migration
 Requires the generalized engine API build. Chassis creation uses command results and waits for successful body creation before graphics and effects are bound. Failed creation reports the host error and can be retried with F10. Driving parameters are unchanged.
+
+
+## Impact deformation (4.5.0)
+
+Requires `sdk.capabilities.deformation >= 1`. Hard impacts permanently deform the
+`skyline_mesh` node and the chassis collider using the engine's general deformation
+field. Wheels keep their existing animated rigid transforms. The GLB materials,
+lighting and shadows remain active. Re-spawn the car to repair it. All multiplayer
+peers need this package and the updated engine. See `sdk/DEFORMATION.md`.

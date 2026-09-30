@@ -2,14 +2,14 @@
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::Path};
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Field {
     #[serde(rename = "type")]
     pub type_name: String,
     pub data: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Collection {
     #[serde(rename = "class")]
     pub class_name: String,
@@ -20,13 +20,28 @@ pub struct Collection {
     pub sha256: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Collections {
     version: u32,
     collections: Vec<Collection>,
 }
 
 impl Collections {
+    /// Replace one profile with a child of a base profile, without editing assets.
+    pub fn override_profile(&mut self, class: &str, target: &str, base: &str,
+        fields: BTreeMap<String, Field>) -> Result<(), String> {
+        let id = crate::attrib_hash::numeric_name(class);
+        let base_id = crate::attrib_hash::numeric_name(base);
+        if !self.collections.iter().any(|c| crate::attrib_hash::numeric_name(&c.class_name)==id
+            && crate::attrib_hash::numeric_name(&c.key)==base_id) { return Err("Missing base profile".into()); }
+        let target_id = crate::attrib_hash::numeric_name(target);
+        self.collections.retain(|c| !(crate::attrib_hash::numeric_name(&c.class_name)==id
+            && crate::attrib_hash::numeric_name(&c.key)==target_id));
+        self.collections.push(Collection {class_name:class.into(),key:target.into(),parent:base.into(),
+            fields,source:"host custom profile".into(),sha256:String::new()});
+        Ok(())
+    }
+
     pub fn entries(&self) -> &[Collection] {
         &self.collections
     }

@@ -6,6 +6,7 @@ mod vehicle_camera;
 pub(crate) mod bridge;
 pub(crate) mod replication;
 mod graphics;
+mod graphics_deformation;
 pub(crate) mod attachment;
 mod glb;
 mod menu;
@@ -775,6 +776,7 @@ fn clear_runtime(world: &mut World, mods: &mut Mods) {
 
 fn retire_graphics(world: &mut World, mods: &mut Mods, key: &(String, String)) {
     if let Some(owned) = mods.graphics.remove(key) {
+        owned.deformation.clear(world);
         world.despawn(owned.entity);
         if let Some(id) = owned.mesh {
             world.resource_mut::<Assets<Mesh>>().remove(id);
@@ -1181,9 +1183,9 @@ fn apply_one(
                 mods.world.remove_joint(j);
             }
         }
-        Command::GraphicsMesh { key,path,body,position,rotation,scale,color,visible,opacity } => {
+        Command::GraphicsMesh { key,path,body,position,rotation,scale,color,visible,opacity,deform_nodes } => {
             graphics::spawn(world,mods,id,id,key,
-                skate_mods::scene::GraphicsDefinition { path,body,color,opacity },
+                skate_mods::scene::GraphicsDefinition { path,body,color,opacity,deform_nodes },
                 skate_mods::scene::TransformState { position:position.unwrap_or([0.;3]),rotation:rotation.unwrap_or([0.,0.,0.,1.]),scale },visible,None)?;
         }
         Command::GraphicsTransform { key, options } => {

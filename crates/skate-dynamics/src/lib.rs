@@ -8,6 +8,7 @@ pub use rapier3d;
 pub mod solid;
 pub mod visual_contact;
 pub mod model;
+pub mod deformation;
 pub mod definition_codec;
 pub use model::ModelColliderOptions;
 pub use solid::{BodyDefinition, SolidBody, SolidCollider};
@@ -46,6 +47,8 @@ pub enum BodyType {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BodyDesc {
+    #[serde(default)]
+    pub deformation: Option<deformation::Options>,
     pub shape: Shape,
     pub body_type: BodyType,
     #[serde(default = "one_mass")]
@@ -112,6 +115,7 @@ fn default_ang_damp() -> f32 {
 impl Default for BodyDesc {
     fn default() -> Self {
         Self {
+            deformation: None,
             shape: Shape::Box {
                 half_extents: [0.5, 0.5, 0.5],
             },
@@ -251,6 +255,7 @@ pub const MAX_EXPORT_TRIANGLES: usize = 512;
 
 #[derive(Clone)]
 struct BodyMeta {
+    geometry_revision: usize,
     definition: BodyDesc,
     shape: Shape,
     mass: f32,
@@ -341,6 +346,7 @@ enum JointKind {
 }
 
 pub struct DynamicsWorld {
+    deformations: BTreeMap<u64, deformation::Runtime>,
     pipeline: PhysicsPipeline,
     islands: IslandManager,
     broad_phase: DefaultBroadPhase,
@@ -367,6 +373,7 @@ pub struct DynamicsWorld {
 impl Default for DynamicsWorld {
     fn default() -> Self {
         Self {
+            deformations: BTreeMap::new(),
             pipeline: PhysicsPipeline::new(),
             islands: IslandManager::new(),
             broad_phase: DefaultBroadPhase::default(),
@@ -441,6 +448,7 @@ impl DynamicsWorld {
 
     pub fn spawn(&mut self, desc: BodyDesc) -> Result<u64, String> {
         self.validate(&desc)?;
+        let deformation = desc.deformation.clone().map(|o| deformation::Runtime::new(&desc,o)).transpose()?;
         let collider = self.collider(&desc)?;
         // Mass comes from the collider (see collider()); do not also call
         // additional_mass or density+mass stack and inflate inertia.
@@ -465,6 +473,7 @@ impl DynamicsWorld {
             .insert_with_parent(collider, handle, &mut self.bodies);
         let id = self.next;
         self.next += 1;
+        if let Some(runtime)=deformation {self.deformations.insert(id,runtime);}
         self.ids.insert(id, handle);
         self.reverse.insert(handle, id);
         if let Some(body) = self.bodies.get_mut(handle) {
@@ -473,6 +482,7 @@ impl DynamicsWorld {
         self.meta.insert(
             id,
             BodyMeta {
+                geometry_revision: 0,
                 definition: desc.clone(),
                 shape: desc.shape.clone(),
                 mass: desc.mass.max(0.01),
@@ -493,6 +503,7 @@ impl DynamicsWorld {
         };
         self.reverse.remove(&handle);
         self.meta.remove(&id);
+        self.deformations.remove(&id);
         self.kinematic_motion.remove(&id);
         self.bodies.remove(
             handle,
@@ -1485,6 +1496,7 @@ impl DynamicsWorld {
                 &(),
                 &(),
             );
+            self.deform_impacts(integration.dt);
         }
         // Rapier keeps user forces/torques until reset; clear after the frame so
         // sdk.physics.force must be re-issued each fixed tick (sandbox WASD pattern).

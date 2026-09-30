@@ -34,6 +34,7 @@ pub(crate) struct GroundState {
     pub(super) entry_settings: super::entry::EntrySettings,
 }
 impl GroundState {
+    pub(crate) fn adopt_mode_settings(&mut self, other: Self) { self.auto_push_enabled = other.auto_push_enabled; self.pumping_settings = other.pumping_settings; }
     pub fn load(data: &Collections, _mode: &str, human_player: bool) -> Result<Self, String> {
         let push = |field| data.float("physics_push", "default", field);
         Ok(Self {

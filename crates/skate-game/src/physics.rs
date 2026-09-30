@@ -92,7 +92,7 @@ use skate_core::{
         drive_frames::RetailAffineTransform,
     },
 };
-use skate_data::collections::Collections;
+
 
 #[derive(Resource)]
 pub(crate) struct GamePhysics {
@@ -266,9 +266,9 @@ impl GamePhysics {
     }
 
     fn load_world_difficulty(asset_root: &std::path::Path, terrain: ground::Terrain, map: Option<&skate_data::skate_map::SkateMap>, difficulty: crate::difficulty::Difficulty) -> Result<Self, String> {
-        let data = Collections::load(asset_root)?;
+        let data = crate::custom_difficulty::load_collections(asset_root)?;
         let settings = PhysicsSettings::load(&data)?;
-        let animation_profile = animation_phase::AnimationProfile::load(&data, difficulty.key())?;
+        let animation_profile = animation_phase::AnimationProfile::load(&data, difficulty.profile_key())?;
         eprintln!(
             "SKATE_PHYSICS_MODE {} index={}",
             difficulty.key(), animation_profile.physics_mode
@@ -613,3 +613,7 @@ mod offboard_root_trace;
 #[cfg(test)]
 #[path = "tests/gameplay_gestures.rs"]
 mod gameplay_gesture_tests;
+
+#[cfg(test)]
+#[path = "tests/difficulty.rs"]
+mod difficulty_tests;

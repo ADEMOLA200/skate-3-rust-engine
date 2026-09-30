@@ -1323,6 +1323,7 @@ local function spawn_rig(request)
     sdk.commands.request("spawn_chassis",{kind="physics_spawn",key=BODY,body={
         shape={type="model",path=MODEL,object="skyline_mesh",
             options={max_hulls=32,resolution=96,concavity=0.0025}},
+        deformation={yield_speed=0.5,compliance=0.15,radius=1.2,max_displacement=0.80,max_step=0.40,resolution={9,5,17}},
         body_type="dynamic",mass=C.mass,position={position[1],height,position[3]},
         heading=heading,friction=0.25,ccd=true,
         -- Native assembly classification; the SDK treats this as metadata.
@@ -1341,7 +1342,7 @@ local function confirm_spawn()
     if not pending then return end
     local result=sdk.commands.result("spawn_chassis")
     if result and result.ok and sdk.bodies.read({kind="mod",key=BODY}) then
-        sdk.graphics.mesh("skyline_visual",{path=MODEL,body=BODY})
+        sdk.graphics.mesh("skyline_visual",{path=MODEL,body=BODY,deform_nodes={"skyline_mesh"}})
         prepare_effects()
         state.spawn_confirm=nil
         state.spawned=true
@@ -1909,18 +1910,21 @@ return {
         -- Replacing only the Lua wrapper must NOT enable unknown native commands.
         local native=sdk.capabilities or {}
         if not native.engine_access or not native.command_results then error("Skyline requires the generalized engine API build") end
+        if (native.deformation or 0)<1 then
+            error("Skyline 4.5.0 requires the deformation engine update. Close the game and relaunch play.bat after the rebuild is installed.")
+        end
         if (native.model_collision or 0)<1 or (native.solid_bridge or 0)<3
             or (native.physics_debug or 0)<1 or (native.scene_transforms or 0)<2 then
-            error("Skyline 4.4.0: the running executable is missing the native Model Collision Repair API. "..
+            error("Skyline 4.5.0: the running executable is missing the native Model Collision Repair API. "..
                 "Install the complete matching crates update and launch a successfully rebuilt game executable. "..
                 "Copying only api.lua is not sufficient.")
         end
         if not sdk.graphics or (sdk.graphics.version or 0)<2 or not sdk.player.detaching then
-            error("Skyline 4.4.0: the embedded Lua SDK wrapper does not match the native Model Collision Repair API")
+            error("Skyline 4.5.0: the embedded Lua SDK wrapper does not match the native Model Collision Repair API")
         end
         reset_simulation(); remove_rig(); prepare_audio(); prepare_presentation(); ensure_vfx_mesh()
         set_collision_debug(sdk.settings.show_collision_hull==true)
-        sdk.log("Skyline 4.4.0: render-model compound collision, native impacts, animated wheels, safe exits; J toggles actual colliders")
+        sdk.log("Skyline 4.5.0: geometry-shaped deformation, model collision, native impacts, animated wheels, safe exits; J toggles actual colliders")
         sdk.ui.text("skyline_status",""); sdk.ui.text("skyline_handling",""); sdk.ui.text("skyline_wheels","")
     end,
     on_update=function(event)

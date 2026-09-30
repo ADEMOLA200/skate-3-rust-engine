@@ -5,6 +5,10 @@ Manifest API remains `2`. Feature discovery uses compiled `sdk.capabilities`:
 `input_override=1`, `player_physics=2`, `player_overlap=1`, `landed_details=1`.
 The host has no injury, vehicle or challenge rules. Those live in Lua.
 
+`deformation=1` adds optional impact-driven mesh/collider deformation.
+See [DEFORMATION.md](DEFORMATION.md) for generic body parameters, scene-node
+bindings, performance limits and multiplayer behavior.
+
 ## Reading systems
 
 `sdk.engine.systems()` lists available system names. `sdk.engine.read(name)`

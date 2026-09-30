@@ -1,5 +1,7 @@
 //! Native-resolution pause UI over a separately scaled 3D render target.
 use crate::difficulty::Difficulty;
+use crate::custom_difficulty::{Tuning, OPTIONS};
+use bevy::ui::RelativeCursorPosition;
 use bevy::{
     camera::RenderTarget,
     image::ImageSampler,
@@ -80,6 +82,10 @@ pub(crate) struct Menu {
     settings: GraphicsSettings,
     path: PathBuf,
     difficulty: Difficulty,
+    custom: Tuning,
+    custom_defaults: Tuning,
+    custom_apply: bool,
+    custom_dirty: bool,
     status: String,
     maps: Vec<crate::map_library::Entry>,
     selected_map: usize,
@@ -145,6 +151,7 @@ impl Menu {
                 rows
             }
             0 => (1000..1000 + self.maps.len()).collect(),
+            1 if self.difficulty == Difficulty::Custom => std::iter::once(3).chain(300..337).chain([8,10]).collect(),
             1 => vec![3, 8, 10],
             2 => vec![0, 1, 2, 13],
             4 => vec![7, 11, 14],
@@ -191,10 +198,11 @@ impl Plugin for GraphicsMenuPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(FramePacer(Instant::now()))
             .add_systems(PostStartup, setup.in_set(PresentationSetup))
-            .add_systems(PreUpdate, (refresh_sections, interact).chain().in_set(MenuInput).after(bevy::input::InputSystems))
+            .add_systems(PreUpdate, (refresh_sections, interact, apply_custom_difficulty).chain().in_set(MenuInput).after(bevy::input::InputSystems))
             .add_systems(PreUpdate, finish_menu_travel.after(crate::map_transition::MapTransitionSet).before(crate::input::poll_controllers))
             .add_systems(PreUpdate, toggle_fullscreen.after(bevy::input::InputSystems))
             .add_systems(Update, preview_menu.before(labels))
+            .add_systems(Update, custom_sliders.before(labels))
             .add_systems(Update, (crate::map_render::advance_day, apply, labels, scroll_menu, resize_menu).chain())
             .add_systems(PostUpdate, crate::map_render::position_celestial_bodies.before(bevy::transform::TransformSystems::Propagate))
             .add_systems(Last, pace);
@@ -254,6 +262,9 @@ fn setup(
         ImageNode::new(target.clone()),
         UiTargetCamera(output),
     ));
+    let data = skate_data::collections::Collections::load(&config.asset_root).expect("validated startup collections");
+    let custom_defaults = Tuning::defaults(&data).expect("validated Easy difficulty");
+    let custom = Tuning::load(&config.asset_root, &data).expect("validated Custom difficulty");
     let maps = crate::map_library::discover(&config.asset_root);
     let destinations = crate::teleport_menu::load(&config.asset_root).unwrap_or_else(|e| { warn!("Map destinations: {e}"); Vec::new() });
     commands.spawn((MenuRoot, MenuLayoutRoot, UiTargetCamera(output), GlobalZIndex(10), Node {
@@ -277,13 +288,19 @@ fn setup(
                 body.spawn((Text::new(""),MenuSubtitle,TextFont {font_size:16.,..default()},TextColor(Color::srgb(0.65,0.72,0.72))));
                 body.spawn((Node {height:px(3),width:px(64),margin:UiRect::bottom(px(10)),..default()},BackgroundColor(Color::srgb(0.78,0.96,0.3))));
                 body.spawn((MenuScroll,ScrollPosition::default(),Node {flex_grow:1.,min_height:px(0),overflow:Overflow::scroll_y(),flex_direction:FlexDirection::Column,row_gap:px(8),..default()})).with_children(|list| {
-                    for i in (0..10).chain(11..16).chain(20..27).chain([10]).chain(200..264).chain([50,51]).chain(1000..1000+maps.len()).chain(1_000_000..1_000_000+destinations.len()) {
-                        list.spawn((Button,MenuRow(i),Node {width:percent(100),min_height:px(56),flex_shrink:0.,padding:UiRect::axes(px(18),px(12)),align_items:AlignItems::Center,border_radius:BorderRadius::all(px(4)),..default()},BackgroundColor(Color::srgb(0.075,0.09,0.095))))
-                            .with_child((MenuLabel(i),Text::new(""),TextFont {font_size:18.,..default()},TextColor(Color::WHITE)));
+                    for i in (0..4).chain(300..337).chain(4..10).chain(11..16).chain(20..27).chain([10]).chain(200..264).chain([50,51]).chain(1000..1000+maps.len()).chain(1_000_000..1_000_000+destinations.len()) {
+                        list.spawn((Button,MenuRow(i),Node {flex_direction:if (300..335).contains(&i) {FlexDirection::Column} else {FlexDirection::Row},width:percent(100),min_height:px(56),flex_shrink:0.,padding:UiRect::axes(px(18),px(12)),align_items:AlignItems::Center,border_radius:BorderRadius::all(px(4)),..default()},BackgroundColor(Color::srgb(0.075,0.09,0.095))))
+                            .with_children(|row| {
+                                row.spawn((MenuLabel(i),Text::new(""),TextFont {font_size:18.,..default()},TextColor(Color::WHITE)));
+                                if (300..335).contains(&i) && !OPTIONS[i-300].boolean {
+                                    row.spawn((CustomTrack(i-300),RelativeCursorPosition::default(),Node {width:percent(100),height:px(14),margin:UiRect::top(px(8)),..default()},BackgroundColor(Color::srgb(0.15,0.19,0.20))))
+                                        .with_child((CustomFill(i-300),Node {width:percent(0),height:percent(100),..default()},BackgroundColor(Color::srgb(0.65,0.85,0.25))));
+                                }
+                            });
                     }
                 });
                 body.spawn((StatusLabel,Text::new(""),TextFont {font_size:14.,..default()},TextColor(Color::srgb(0.78,0.96,0.3))));
-                body.spawn((Text::new("Up/Down Navigate    Enter / A Select    Left/Right Adjust    Tab Sections\nSettings save automatically"),TextFont {font_size:13.,..default()},TextColor(Color::srgb(0.55,0.62,0.62))));
+                body.spawn((Text::new("Up/Down Navigate    Enter / A Select    Left/Right Adjust    Tab Sections\nCustom tuning: use Apply below. Other settings save automatically."),TextFont {font_size:13.,..default()},TextColor(Color::srgb(0.55,0.62,0.62))));
             });
         });
     });
@@ -296,6 +313,7 @@ fn setup(
         settings,
         path,
         difficulty: config.difficulty,
+        custom, custom_defaults, custom_apply:false, custom_dirty:false,
         status: String::new(),
         maps,
         selected_map,
@@ -405,7 +423,7 @@ pub(crate) fn interact(
         if keys.just_pressed(KeyCode::ArrowDown) || nav.pressed & 2 != 0 {
             menu.selected = visible[(index + 1) % rows];
         }
-        let adjustable = (menu.daylight && menu.selected < 3) || (!menu.multiplayer && !menu.daylight && menu.selected < 4);
+        let adjustable = (menu.section == 1 && menu.difficulty == Difficulty::Custom && (300..335).contains(&menu.selected)) || (menu.daylight && menu.selected < 3) || (!menu.multiplayer && !menu.daylight && menu.selected < 4);
         if adjustable && (keys.just_pressed(KeyCode::ArrowLeft) || nav.pressed & 4 != 0) {
             action = Some((menu.selected, -1));
         }
@@ -528,6 +546,9 @@ pub(crate) fn interact(
             }
         } else {
             match row {
+                300..=334 => { menu.custom.adjust(row-300,direction); menu.custom_dirty=true; },
+                335 => menu.custom_apply=true,
+                336 => { menu.custom=menu.custom_defaults.clone(); menu.custom_dirty=true; menu.status="Easy values restored. Select Apply custom tuning to use them.".into(); },
                 0 => {
                     let size = cycle(
                         RESOLUTIONS,
@@ -782,6 +803,9 @@ fn labels(
                     }
                 ),
                 3 => format!("Difficulty            {}", menu.difficulty.label()),
+                300..=334 => menu.custom.label(label.0-300),
+                335 => if menu.custom_dirty {"Apply custom tuning *".into()} else {"Apply custom tuning".into()},
+                336 => "Reset custom tuning to Easy".into(),
                 6 => "Resume".into(),
                 7 => "Quit game".into(),
                 8 => "Character customiser".into(),
@@ -810,6 +834,9 @@ fn labels(
                 format!("\nYour connection code: {}", net.host_code)
             }
         )
+    } else if menu.section == 1 && menu.difficulty == Difficulty::Custom && (300..335).contains(&menu.selected) {
+        format!("{}\n{}", OPTIONS[menu.selected-300].description,
+            if menu.custom_dirty {"Changes pending - select Apply custom tuning below. Left/Right adjusts; drag bars with the mouse."} else {"Left/Right adjusts; drag bars with the mouse. Custom starts from Easy."})
     } else {
         menu.status.clone()
     };
@@ -828,6 +855,7 @@ fn preview_menu(config: Res<crate::config::Config>, mut menu: ResMut<Menu>, mut 
     if *done || config.verification_capture.is_none() { return; }
     *done = true;
     match std::env::var("SKATE_VERIFY_MENU").as_deref() {
+        Ok("custom") => { menu.open = true; menu.select_section(1); menu.selected=300; },
         Ok("mods") => { menu.open = true; mods.begin(); }
         Ok("multiplayer") => { menu.open = true; menu.select_section(3); }
         _ => {}
@@ -934,7 +962,7 @@ mod tests {
             .insert_resource(images)
             .insert_resource(Menu {
                 open: false, selected: 0, settings: GraphicsSettings::default(),
-                difficulty: Difficulty::Easy, path: PathBuf::new(), status: String::new(),
+                difficulty: Difficulty::Easy, custom:Tuning::default(), custom_defaults:Tuning::default(), custom_apply:false, custom_dirty:false, path: PathBuf::new(), status: String::new(),
                 multiplayer: false, browser: false, network_page: 0, browser_count: 0, daylight: false, section: 0, custom_sections: Vec::new(), map_detail: false, destinations: Vec::new(), pending_travel: None,
                 maps: vec![crate::map_library::Entry { label: "Test world".into(), path: None }], selected_map: 0,
             })
@@ -974,7 +1002,7 @@ mod tests {
     fn sections_expose_only_real_rows_and_all_maps() {
         let mut menu = Menu {
             open: true, selected: 1000, settings: GraphicsSettings::default(),
-            path: PathBuf::new(), difficulty: Difficulty::Easy, status: String::new(),
+            path: PathBuf::new(), difficulty: Difficulty::Easy, custom:Tuning::default(), custom_defaults:Tuning::default(), custom_apply:false, custom_dirty:false, status: String::new(),
             maps: (0..40).map(|i| crate::map_library::Entry { label: format!("Map {i}"), path: None }).collect(),
             selected_map: 0, multiplayer: false, browser: false, network_page: 0, browser_count: 0, daylight: false, section: 0, custom_sections: Vec::new(), map_detail: false, destinations: Vec::new(), pending_travel: None,
         };
@@ -1043,4 +1071,39 @@ mod tests {
         assert_eq!(cycle(LIMITS, 0, -1), 240);
         assert_eq!(cycle(LIMITS, 240, 1), 0);
     }
+}
+
+#[derive(Component)] struct CustomTrack(usize);
+#[derive(Component)] struct CustomFill(usize);
+fn custom_sliders(mut menu: ResMut<Menu>, mouse: Res<ButtonInput<MouseButton>>,
+    tracks: Query<(&CustomTrack,&RelativeCursorPosition)>, mut fills: Query<(&CustomFill,&mut Node)>,
+    mut dragging: Local<Option<usize>>) {
+    if !menu.open || menu.section != 1 || menu.difficulty != Difficulty::Custom { *dragging=None; return; }
+    if mouse.just_pressed(MouseButton::Left) {
+        *dragging=tracks.iter().find(|(_,p)|p.cursor_over()).map(|(t,_)|t.0);
+    }
+    if !mouse.pressed(MouseButton::Left) { *dragging=None; }
+    if let Some(index)=*dragging {
+        if let Some((_,position))=tracks.iter().find(|(t,_)|t.0==index) {
+            if let Some(pos)=position.normalized {
+                menu.custom.set_fraction(index,pos.x); menu.custom_dirty=true; menu.selected=300+index;
+            }
+        }
+    }
+    for (fill,mut node) in &mut fills {node.width=percent(menu.custom.value(fill.0)/OPTIONS[fill.0].max*100.);}
+}
+fn apply_custom_difficulty(mut menu: ResMut<Menu>, config: Res<crate::config::Config>,
+    mut skater: ResMut<crate::physics::SkaterRuntime>) {
+    if !std::mem::take(&mut menu.custom_apply) {return;}
+    let result=(|| -> Result<(),String> {
+        let mut data=skate_data::collections::Collections::load(&config.asset_root)?;
+        menu.custom.overlay(&mut data)?;
+        skater.reload_difficulty(&data)?;
+        menu.custom.save(&config.asset_root)?;
+        Ok(())
+    })();
+    menu.status=match result {
+        Ok(())=> {menu.custom_dirty=false;"Custom tuning applied and saved.".into()},
+        Err(e)=>format!("Custom tuning: {e}"),
+    };
 }

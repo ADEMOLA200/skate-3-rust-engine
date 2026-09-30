@@ -2,9 +2,9 @@
   "id": "examples.skyline",
   "api": 2,
   "name": "Skyline DRIVE \u2014 Solid Bridge",
-  "version": "4.4.0",
+  "version": "4.5.0",
   "author": "Skate3clone",
-  "description": "Generalized engine API integration with acknowledged chassis spawning; model collision, native impacts, animated wheels and safe exits. Driving tuning is unchanged.",
+  "description": "General engine deformation: obstacle-shaped chassis dents update GLB meshes and solid collision, with owner-authoritative replication. Animated wheels remain rigid.",
   "entry": "main.lua",
   "settings": {
     "tire_friction": {

@@ -102,6 +102,33 @@ pub(crate) struct SkaterRuntime {
 }
 
 impl SkaterRuntime {
+    /// Prepare all settings before committing; never replace active physics state.
+    pub(crate) fn reload_difficulty(&mut self, data: &Collections) -> Result<(), String> {
+        let profiles = super::ground_runtime::GroundProfiles::load(data)?;
+        let ground_settings = profiles.select(self.player_input.processed.state_variant_index_2528,
+            self.player_input.processed.surface_mode_2540.clamp(1, 5))?;
+        let ground = GroundState::load(data, "test", true)?;
+        let air = super::air_phase::AirSettings::load(data)?;
+        let reckoning = super::air_reckoning::AirReckoning::load(data)?;
+        let known = super::known_air::KnownAir::load(data)?;
+        let wipeout = super::wipeout::Wipeout::load(data)?;
+        let grind = super::grind::Runtime::load(data)?;
+        let jumps = super::ground_animation::GroundAnimationSettings::load(data)?;
+        let animation = AnimationInput::load(data, &self.animation.evaluator.frames, "test")?;
+        let player = PlayerInputRuntime::load(data)?;
+        self.ground_profiles = profiles; self.ground_settings = ground_settings;
+        self.ground.adopt_mode_settings(ground);
+        self.air_settings = air;
+        self.air_reckoning.adopt_mode_settings(reckoning);
+        self.known_air.adopt_mode_settings(known);
+        self.wipeout.adopt_mode_settings(wipeout);
+        self.grind.adopt_mode_settings(grind);
+        self.ground_animation_settings = jumps;
+        self.animation_input.adopt_mode_settings(animation);
+        self.player_input.player.state_variants_1408 = player.player.state_variants_1408;
+        Ok(())
+    }
+
     pub(crate) fn travel_to(&mut self, transform: [[f32; 4]; 4]) -> Result<(), String> {
         self.travel(transform, None)
     }
@@ -128,7 +155,7 @@ impl SkaterRuntime {
         asset_root: &Path, graphs: &StockGraphs, physics: &GamePhysics, mode: &str,
         source: Option<std::sync::Arc<crate::skater_animation::AnimationSource>>,
     ) -> Result<Self, String> {
-        let data = Collections::load(asset_root)?;
+        let data = crate::custom_difficulty::load_collections(asset_root)?;
         let banks = skate_data::animation_banks::AnimationBanks::load(asset_root)?;
         let animation_metadata = banks.metadata()?;
         // The host's current character is a custom skater with no pro selector

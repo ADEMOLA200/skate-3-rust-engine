@@ -13,6 +13,7 @@ pub(crate) struct Wipeout {
     modes: [Mode; 5],
 }
 impl Wipeout {
+    pub(crate) fn adopt_mode_settings(&mut self, other: Self) { self.modes = other.modes; }
     pub fn check_air_collision(
         &mut self,
         p: &ProcessedPhysicsInput,

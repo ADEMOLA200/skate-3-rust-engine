@@ -90,6 +90,8 @@ impl NodeState {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GraphicsDefinition {
+    #[serde(default)]
+    pub deform_nodes: Vec<String>,
     pub path:String, pub body:Option<String>, pub color:[f32;3],
     #[serde(default = "opaque")]
     pub opacity:f32,
@@ -97,7 +99,8 @@ pub struct GraphicsDefinition {
 fn opaque() -> f32 { 1. }
 impl GraphicsDefinition {
     pub fn validate(&self) -> bool {
-        valid_asset(&self.path) && self.body.as_deref().is_none_or(valid_key)
+        self.deform_nodes.len()<=64 && self.deform_nodes.iter().all(|s|valid_node(s))
+            && valid_asset(&self.path) && self.body.as_deref().is_none_or(valid_key)
             && self.color.iter().all(|v| v.is_finite() && (0. ..=1.).contains(v))
             && self.opacity.is_finite() && (0. ..=1.).contains(&self.opacity)
     }

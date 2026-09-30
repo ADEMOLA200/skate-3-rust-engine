@@ -236,6 +236,8 @@ pub enum Command {
     },
     GraphicsMesh {
         key: String,
+        #[serde(default)]
+        deform_nodes: Vec<String>,
         /// Package-relative GLB path, or empty for a debug box.
         #[serde(default)]
         path: String,
@@ -398,7 +400,7 @@ impl Command {
                 crate::schema::valid_id(key) && options.validate()
             }
             Self::PhysicsSpawn { key, body } => {
-                crate::schema::valid_id(key) && serde_json::to_value(body).is_ok()
+                crate::schema::valid_id(key) && body.deformation.as_ref().is_none_or(|o|o.validate().is_ok()) && serde_json::to_value(body).is_ok()
             }
             Self::PhysicsRemove { key }
             | Self::PhysicsRemoveJoint { key }
@@ -547,10 +549,12 @@ impl Command {
                 scale,
                 color,
                 opacity,
+                deform_nodes,
                 ..
             } => {
                 crate::schema::valid_id(key)
                     && crate::scene::valid_asset(path)
+                    && deform_nodes.len()<=64 && deform_nodes.iter().all(|s|crate::scene::valid_node(s))
                     && body.as_ref().is_none_or(|b| crate::schema::valid_id(b))
                     && position.as_ref().is_none_or(|p| point(p))
                     && rotation.as_ref().is_none_or(|q| quat(q))
@@ -900,6 +904,7 @@ impl Vm {
             let capabilities = lua.create_table()?;
             capabilities.set("solid_bridge", 3)?;
             capabilities.set("model_collision", 1)?;
+            capabilities.set("deformation", 1)?;
             capabilities.set("physics_debug", 1)?;
             capabilities.set("scene_transforms", 2)?;
             capabilities.set("skater", 4)?;
@@ -1684,5 +1689,25 @@ mod snapshot_performance_tests {
         }}
         eprintln!("SNAPSHOT_RIG_BENCH six_mods_one_full_rig_reader_ms_per_frame={:.3}",begin.elapsed().as_secs_f64()*1000./iterations as f64);
         eprintln!("SNAPSHOT_BENCH bytes={} mods={mods} iterations={iterations} eager_ms_per_frame={:.3} lazy_ms_per_frame={:.3} ratio={:.1}",serde_json::to_vec(&*snapshot).unwrap().len(),eager.as_secs_f64()*1000./iterations as f64,lazy.as_secs_f64()*1000./iterations as f64,eager.as_secs_f64()/lazy.as_secs_f64());
+    }
+}
+
+#[cfg(test)]
+mod deformation_api_tests {
+    use super::*;
+    #[test]
+    fn generic_deformation_descriptors_cross_lua_command_boundary() {
+        let lua=Lua::new();
+        let value:mlua::Value=lua.load(r#"return {
+            kind='physics_spawn',key='metal_prop',body={
+                shape={type='box',half_extents={1,1,1}},body_type='dynamic',
+                deformation={yield_speed=3,compliance=0.03,resolution={9,5,17}}
+            }}"#).eval().unwrap();
+        let command:Command=lua.from_value(value).unwrap();
+        let Command::PhysicsSpawn {body,..}=command else {panic!()};
+        assert_eq!(body.deformation.unwrap().yield_speed,3.);
+        let command:Command=serde_json::from_value(serde_json::json!({"kind":"graphics_mesh","key":"visual",
+            "path":"prop.glb","body":"metal_prop","deform_nodes":["shell"]})).unwrap();
+        assert!(command.validate());
     }
 }

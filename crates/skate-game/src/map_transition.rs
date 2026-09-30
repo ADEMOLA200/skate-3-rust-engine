@@ -131,7 +131,7 @@ fn start(world: &World, entry: Entry) -> Result<Phase, String> {
                     stage.store(1, Ordering::Relaxed);
                     let physics = info_span!("load_physics").in_scope(|| GamePhysics::load_with_difficulty(&root, map.as_ref(), difficulty))?;
                     stage.store(2, Ordering::Relaxed);
-                    let skater = SkaterRuntime::load_for_world(&root, &graphs, &physics, difficulty.key(), Some(source))?;
+                    let skater = SkaterRuntime::load_for_world(&root, &graphs, &physics, difficulty.profile_key(), Some(source))?;
                     let mut controls = PlayerControls::load(&root)?;
                     controls.preferences = preferences;
                     let camera = crate::camera::CameraRuntime::load(&root)?;

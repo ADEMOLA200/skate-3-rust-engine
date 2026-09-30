@@ -2,7 +2,7 @@
 //! Scalar metadata is JSON; hull vertices are lossless little-endian f32 values.
 //! This is an in-memory wire encoding, NOT a collision JSON/file requirement.
 use crate::{BodyDefinition, Shape, model::{MAX_BODY_POINTS, MAX_COMPOUND_HULLS, MAX_HULL_POINTS}};
-const MAGIC: &[u8; 4] = b"SBD3";
+const MAGIC: &[u8; 4] = b"SBD4";
 const MAX_HEADER: usize = 8_192;
 pub const MAX_DEFINITION_BYTES: usize = 640 * 192;
 
@@ -38,6 +38,9 @@ pub fn encode(definition: &BodyDefinition) -> Result<Vec<u8>, String> {
         groups.push(std::mem::take(points));
         Ok(())
     })?;
+    let offsets=if let Some(field)=&mut header.deformation {
+        field.validate()?; std::mem::take(&mut field.offsets)
+    } else {Vec::new()};
     let metadata = serde_json::to_vec(&header).map_err(|e| e.to_string())?;
     if metadata.len() > MAX_HEADER { return Err("body definition metadata budget exceeded".into()); }
     let mut bytes = Vec::with_capacity(8 + metadata.len() + 12 * total + 2 * groups.len());
@@ -48,6 +51,7 @@ pub fn encode(definition: &BodyDefinition) -> Result<Vec<u8>, String> {
         bytes.extend_from_slice(&(points.len() as u16).to_le_bytes());
         for point in points { for value in point { bytes.extend_from_slice(&value.to_le_bytes()); } }
     }
+    for offset in offsets {for value in offset {bytes.extend_from_slice(&value.to_le_bytes());}}
     if bytes.len() > MAX_DEFINITION_BYTES { return Err("body definition byte budget exceeded".into()); }
     Ok(bytes)
 }
@@ -83,6 +87,15 @@ pub fn decode(bytes: &[u8]) -> Result<BodyDefinition, String> {
         at += payload.len();
         Ok(())
     })?;
+    if let Some(field)=&mut definition.deformation {
+        if !field.offsets.is_empty() || field.resolution.iter().any(|n| !(2..=25).contains(n)) {return Err("bad deformation header".into());}
+        let count=field.resolution.iter().product::<usize>();
+        if count>2048 {return Err("deformation field budget exceeded".into());}
+        let payload=bytes.get(at..at+count*12).ok_or("truncated deformation field")?;
+        field.offsets=payload.chunks_exact(12).map(|p|std::array::from_fn(|a|
+            f32::from_le_bytes(p[a*4..a*4+4].try_into().unwrap()))).collect();
+        field.validate()?; at+=payload.len();
+    }
     if at != bytes.len() { return Err("trailing body definition bytes".into()); }
     Ok(definition)
 }
@@ -94,7 +107,7 @@ mod tests {
     #[test]
     fn compound_round_trip_and_truncation() {
         let hull = vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
-        let definition = BodyDefinition { body: BodyDesc {
+        let definition = BodyDefinition { deformation: None, body: BodyDesc {
             shape: Shape::Compound { hulls: vec![hull.clone(), hull] }, ..Default::default()
         }, extras: vec![] };
         let bytes = encode(&definition).unwrap();
@@ -106,7 +119,7 @@ mod tests {
     }
     #[test]
     fn rejects_asset_paths_and_oversized_data() {
-        let definition = BodyDefinition { body: BodyDesc { shape: Shape::Model {
+        let definition = BodyDefinition { deformation: None, body: BodyDesc { shape: Shape::Model {
             path: "model.glb".into(), object: String::new(), options: Default::default()
         }, ..Default::default() }, extras: vec![] };
         assert!(encode(&definition).is_err());

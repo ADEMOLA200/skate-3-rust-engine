@@ -166,6 +166,7 @@ function sdk.graphics.mesh(key, opts)
     opts = opts or {}
     submit{
         kind="graphics_mesh",
+        deform_nodes=(type(opts.deform_nodes)=="table" and next(opts.deform_nodes)) and opts.deform_nodes or nil,
         key=key,
         path=opts.path or "",
         body=opts.body,

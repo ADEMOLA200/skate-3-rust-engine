@@ -77,7 +77,11 @@ impl GroundSettings {
         //broadcasts82165A10 (zero) into830BD380 for speed override direction.
         let threshold = [f32::from_bits(0x3586_37bd); 4];
         Ok(Self {
-            push_target_multiplier: 1.,
+            // Only Custom overrides the animation-requested push gain. Original
+            // profiles and raw stock test collections keep the native 1x path.
+            push_target_multiplier: if mode=="test" && data.field("physics_mode",mode,"HostPushStrength").is_ok() {
+                m("HostPushStrength")?
+            } else {1.},
             foot_force_offset: f("physics_feet", "FootForceOffset")?,
             absorption_front: f("physics_feet", "AbsorptionFootForceScalar")?,
             absorption_rear: f("physics_feet", "AbsorptionFootForceRearScalar")?,

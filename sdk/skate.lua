@@ -2,7 +2,16 @@
 -- SDK 2 language-server declarations. Not executed at runtime.
 ---@alias Vec3 number[]
 ---@alias Quat number[] xyzw
+---@class DeformationOptions
+---@field yield_speed? number contact impulse/body mass threshold, m/s (default 2)
+---@field compliance? number metres per m/s above yield (default 0.045)
+---@field radius? number impact region metres (default 1.2)
+---@field max_displacement? number cumulative offset limit metres (default 0.55)
+---@field max_step? number per-impact crush metres (default 0.22)
+---@field cooldown? number minimum update interval seconds (default 0.10)
+---@field resolution? integer[] XYZ lattice counts, default {9,5,17}; <=2048 total
 ---@class BodyDesc
+---@field deformation? DeformationOptions
 ---@field shape {type:'box'|'sphere'|'capsule'|'convex'|'mesh', half_extents?:Vec3, radius?:number, half_height?:number, points?:Vec3[], path?:string, object?:string}
 ---@field body_type 'dynamic'|'kinematic'|'static'
 ---@field mass? number
@@ -230,6 +239,7 @@ function sdk.physics.contacts() end
 function sdk.physics.touching() end
 ---@param key string
 ---@param opts {path?:string, body?:string, position?:Vec3, rotation?:Quat, scale?:Vec3, color?:Vec3, visible?:boolean, opacity?:number}
+-- opts.deform_nodes: optional string[] of GLB scene node names whose meshes follow the bound body deformation.
 function sdk.graphics.mesh(key, opts) end
 ---@param key string
 function sdk.graphics.remove(key) end

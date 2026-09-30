@@ -236,15 +236,27 @@ fn incoming(world:&mut World,mods:&mut Mods,state:&mut State,records:Vec<(u64,St
         state.pending_poses.insert((owner(peer,&packet.owner),packet.key.clone()),(pose.clone(),Instant::now()));
         let changed=state.bodies.get(&slot).is_none_or(|r|r.epoch!=packet.epoch || r.instance!=packet.instance || r.revision!=packet.revision);
         if changed {
-            remove_body(mods,state,&slot);
+            // Geometry may span multiple packets. Continue moving the previous
+            // valid solid while assembling, rather than freezing/removing it.
+            if let Some(replica)=state.bodies.get_mut(&slot).filter(|r|r.epoch==packet.epoch && r.instance==packet.instance) {
+                replica.receive(pose.clone(),seq);
+            }
             let Some(bytes)=assemble(packet,accepted.iter().filter(|r|r.0==peer).map(|r|&r.2)) else {continue;};
             let definition=match skate_dynamics::definition_codec::decode(&bytes) {
                 Ok(definition)=>definition,
                 Err(error)=>{issue(state,format!("{}: remote collider definition: {error}",packet.owner));continue;}
             };
             if !(0.01..=10_000_000.).contains(&definition.body.mass) {continue;}
+            if let Some(replica)=state.bodies.get_mut(&slot).filter(|r|r.epoch==packet.epoch && r.instance==packet.instance) {
+                match mods.world.update_replica_deformation(replica.id,&definition) {
+                    Ok(true)=>{replica.revision=packet.revision;continue;},
+                    Ok(false)=>{},
+                    Err(error)=>{issue(state,format!("remote deformation: {error}"));continue;},
+                }
+            }
             match mods.world.spawn_replica(&definition) {
                 Ok(id) => {
+                    remove_body(mods,state,&slot);
                     mods.world.set_pose(id,pose.p,pose.q);
                     mods.world.set_kinematic_motion(id,pose.v,pose.w);
                     mods.bodies.insert((owner(peer,&packet.owner),packet.key.clone()),id);

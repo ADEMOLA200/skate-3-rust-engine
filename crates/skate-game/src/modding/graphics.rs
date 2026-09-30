@@ -10,6 +10,7 @@ pub(super) struct TimedNode { pub state:NodeState, pub received:Instant }
 #[derive(Clone,Copy)]
 struct Binding { entity:Entity, authored:Transform }
 pub(super) struct Owned {
+    pub(super) deformation: super::graphics_deformation::State,
     pub entity:Entity,
     pub mesh:Option<AssetId<Mesh>>,
     pub material:Option<AssetId<StandardMaterial>>,
@@ -22,7 +23,7 @@ pub(super) struct Owned {
     bindings:BTreeMap<String,Binding>,
     ambiguous:BTreeSet<String>,
     warned:BTreeSet<String>,
-    ready:bool,
+    pub(super) ready:bool,
 }
 
 pub(super) fn transform(state:&TransformState) -> Transform {
@@ -90,6 +91,7 @@ pub(super) fn spawn(
     mods.graphics_serial=mods.graphics_serial.wrapping_add(1);
     world.entity_mut(entity).insert((crate::retail_character::ModGraphicsLit,bevy::camera::visibility::RenderLayers::from_layers(&[0,28])));
     mods.graphics.insert(slot,Owned {
+        deformation: Default::default(),
         entity,mesh,material,body:definition.body.clone(),definition,transform:state,visible,
         serial:serial.unwrap_or(mods.graphics_serial),nodes:BTreeMap::new(),bindings:BTreeMap::new(),
         ambiguous:BTreeSet::new(),warned:BTreeSet::new(),ready:false,
@@ -171,6 +173,11 @@ pub(super) fn sync(world:&mut World,mods:&mut Mods) {
         if let Some(mut current)=world.get_mut::<Transform>(owned.entity) { if *current!=t {*current=t;} }
         if let Some(mut current)=world.get_mut::<Visibility>(owned.entity) { let next=if visible { Visibility::Visible } else { Visibility::Hidden }; if *current!=next {*current=next;} }
         bind(world,owned);
+        if let Some(id)=owned.body.as_ref().and_then(|body|mods.bodies.get(&(owner.clone(),body.clone()))).copied() {
+            if let Some(field)=mods.world.deformation(id) {
+                super::graphics_deformation::sync(world,owned,id,field,mods.world.collider_offset(id).unwrap_or([0.;3]));
+            }
+        }
         for (name,node) in &owned.nodes {
             if owned.ambiguous.contains(name) || !owned.bindings.contains_key(name) {
                 if owned.ready && owned.warned.insert(name.clone()) {
@@ -264,5 +271,78 @@ mod tests {
     #[test] fn node_extrapolation_freezes_at_one_tenth_second() {
         let mut state=NodeState::default();state.angular_velocity=[20.,0.,0.];
         assert_eq!(node_transform(Transform::IDENTITY,&state,1.),node_transform(Transform::IDENTITY,&state,0.1));
+    }
+}
+
+#[cfg(test)]
+mod deformation_tests {
+    use super::*;
+    use bevy::mesh::VertexAttributeValues;
+    #[test]
+    fn deformation_is_instance_local_and_keeps_glb_materials_and_rigid_parts() {
+        let mut world=World::new();world.init_resource::<Assets<Mesh>>();
+        world.init_resource::<Assets<StandardMaterial>>();
+        let source=world.resource_mut::<Assets<Mesh>>().add(Cuboid::new(1.,1.,1.));
+        let material=world.resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial {metallic:0.9,..default()});
+        let root=world.spawn(Transform::IDENTITY).id();
+        let panel=world.spawn((Name::new("panel"),Transform::from_xyz(0.5,0.,0.),ChildOf(root),
+            Mesh3d(source.clone()),MeshMaterial3d(material.clone()))).id();
+        let rigid=world.spawn((Name::new("rigid"),Transform::IDENTITY,ChildOf(root),Mesh3d(source.clone()))).id();
+        let mut owned=Owned {entity:root,mesh:None,material:None,body:Some("object".into()),
+            definition:GraphicsDefinition {path:String::new(),body:Some("object".into()),color:[1.;3],opacity:1.,deform_nodes:vec!["panel".into()]},
+            transform:TransformState {position:[0.25,0.,0.],scale:[2.,1.,1.],..default()},visible:true,serial:1,
+            nodes:BTreeMap::new(),bindings:BTreeMap::new(),ambiguous:BTreeSet::new(),warned:BTreeSet::new(),ready:true,
+            deformation:default()};
+        let field=skate_dynamics::deformation::Field {min:[-4.;3],max:[4.;3],resolution:[2;3],offsets:vec![[0.,0.,-0.2];8],revision:1};
+        super::super::graphics_deformation::sync(&mut world,&mut owned,1,&field,[0.25,0.,0.]);
+        let handle=world.get::<Mesh3d>(panel).unwrap().0.clone();
+        assert_ne!(handle,source);
+        assert_eq!(world.get::<Mesh3d>(rigid).unwrap().0,source);
+        assert_eq!(world.get::<MeshMaterial3d<StandardMaterial>>(panel).unwrap().0,material);
+        let meshes=world.resource::<Assets<Mesh>>();
+        let Some(VertexAttributeValues::Float32x3(original))=meshes.get(&source).unwrap().attribute(Mesh::ATTRIBUTE_POSITION) else {panic!()};
+        let Some(VertexAttributeValues::Float32x3(damaged))=meshes.get(&handle).unwrap().attribute(Mesh::ATTRIBUTE_POSITION) else {panic!()};
+        for (a,b) in original.iter().zip(damaged) {assert!((b[2]-a[2]+0.2).abs()<1e-5);assert_eq!(b[0],a[0]);}
+        super::super::graphics_deformation::sync(&mut world,&mut owned,1,&field,[0.25,0.,0.]);
+        assert_eq!(world.get::<Mesh3d>(panel).unwrap().0,handle);
+        // New replica layout rebinds weights to retained ORIGINAL vertices.
+        let repaired=skate_dynamics::deformation::Field {min:[-4.;3],max:[4.;3],resolution:[3;3],offsets:vec![[0.;3];27],revision:0};
+        super::super::graphics_deformation::sync(&mut world,&mut owned,2,&repaired,[0.25,0.,0.]);
+        let meshes=world.resource::<Assets<Mesh>>();
+        assert_eq!(meshes.get(&handle).unwrap().attribute(Mesh::ATTRIBUTE_POSITION),meshes.get(&source).unwrap().attribute(Mesh::ATTRIBUTE_POSITION));
+        owned.deformation.clear(&mut world);
+        assert!(world.resource::<Assets<Mesh>>().get(&handle).is_none());
+        assert!(world.resource::<Assets<Mesh>>().get(&source).is_some());
+    }
+}
+
+#[cfg(test)]
+mod deformation_timing {
+    use super::*;
+    #[test]
+    #[ignore = "manual actual Skyline asset timing probe"]
+    fn actual_asset_deformation_cpu_cost() {
+        let path=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mods/Skyline_Drive_Mod/skyline.glb");
+        let geometry=skate_mods::model::read_geometry_file(&path,"skyline_mesh",&Default::default()).unwrap();
+        let vertices=geometry.vertices.len();
+        let mut source=Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList,bevy::asset::RenderAssetUsages::default());
+        source.insert_attribute(Mesh::ATTRIBUTE_POSITION,geometry.vertices);
+        source.insert_indices(bevy::mesh::Indices::U32(geometry.triangles.into_iter().flatten().collect()));
+        source.compute_normals();
+        let mut world=World::new();world.init_resource::<Assets<Mesh>>();
+        let source=world.resource_mut::<Assets<Mesh>>().add(source);
+        let root=world.spawn(Transform::IDENTITY).id();
+        world.spawn((Name::new("shell"),Transform::IDENTITY,ChildOf(root),Mesh3d(source)));
+        let mut owned=Owned {entity:root,mesh:None,material:None,body:Some("object".into()),
+            definition:GraphicsDefinition {path:String::new(),body:Some("object".into()),color:[1.;3],opacity:1.,deform_nodes:vec!["shell".into()]},
+            transform:default(),visible:true,serial:1,nodes:BTreeMap::new(),bindings:BTreeMap::new(),ambiguous:BTreeSet::new(),warned:BTreeSet::new(),ready:true,deformation:default()};
+        let mut field=skate_dynamics::deformation::Field {min:[-2.,-1.,-3.],max:[2.,2.,3.],resolution:[9,5,17],offsets:vec![[0.;3];9*5*17],revision:1};
+        for i in 0..field.offsets.len() {let p=field.rest(i);if p.z>1. {field.offsets[i][2]=-0.2;}}
+        let t=std::time::Instant::now();super::super::graphics_deformation::sync(&mut world,&mut owned,1,&field,[0.;3]);
+        let initial=t.elapsed();
+        field.revision+=1;for p in &mut field.offsets {p[2]*=1.2;}
+        let t=std::time::Instant::now();super::super::graphics_deformation::sync(&mut world,&mut owned,1,&field,[0.;3]);let update=t.elapsed();
+        let t=std::time::Instant::now();for _ in 0..10000 {super::super::graphics_deformation::sync(&mut world,&mut owned,1,&field,[0.;3]);}
+        eprintln!("Skyline welded vertices={vertices}; initial mesh bind/update={initial:?}; subsequent damage={update:?}; 10000 unchanged checks={:?}; excludes GPU upload/tangents",t.elapsed());
     }
 }
